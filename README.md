@@ -4,8 +4,6 @@ A simple radar system built on the STM32L476 microcontroller. An SG90 servo swee
 
 The project uses register-level programming for the GPIO pins, timers and PWM. The STM32 HAL is used only for clock setup and millisecond delays.
 
-![Block diagram](radar_block_diagram.png)
-
 ## Features
 
 - Servo sweeps the sensor 0° → 180° → 0° continuously
@@ -17,58 +15,44 @@ The project uses register-level programming for the GPIO pins, timers and PWM. T
 
 ## Hardware
 
-| Component | Purpose |
-|---|---|
-| STM32L476 (Nucleo board) | Microcontroller |
-| HC-SR04 | Ultrasonic distance sensor (input) |
-| SG90 micro servo | Rotates the sensor |
-| Buzzer | Audible alert |
-| 16x2 character LCD + shift register | Status display (needs only 3 pins) |
-| External 5 V supply | Powers the servo |
+- **STM32L476** (Nucleo board): the microcontroller that runs everything
+- **HC-SR04:** ultrasonic distance sensor, the system's input
+- **SG90 micro servo:** rotates the sensor across the scan area
+- **Buzzer:** gives an audible alert
+- **16x2 character LCD with a shift register:** displays the status using only 3 pins
+- **External 5 V supply:** powers the servo
 
 ## Pin connections
 
-| STM32 pin | Connected to | Function |
-|---|---|---|
-| PB3 | SG90 signal | TIM2_CH2 PWM (50 Hz, 1–2 ms pulse) |
-| PC7 | HC-SR04 TRIG | GPIO output, 10 µs trigger pulse |
-| PB6 | HC-SR04 ECHO | GPIO input (5 V tolerant, no pull-up/down) |
-| PC9 | Buzzer | TIM3_CH4 PWM (~3.5 kHz) |
-| PB5 | Shift register data | GPIO output |
-| PA5 | Shift register clock | GPIO output |
-| PA10 | Shift register latch | GPIO output |
+- **PB3 → SG90 signal:** TIM2 channel 2 PWM (50 Hz, 1–2 ms pulse)
+- **PC7 → HC-SR04 TRIG:** GPIO output that sends a 10 µs trigger pulse
+- **PB6 ← HC-SR04 ECHO:** GPIO input (5 V tolerant, no pull-up/down)
+- **PC9 → Buzzer:** TIM3 channel 4 PWM (about 3.5 kHz)
+- **PB5 → Shift register data**
+- **PA5 → Shift register clock**
+- **PA10 → Shift register latch**
 
-### Power notes
-
-- HC-SR04: VCC to 5 V, GND to STM32 GND.
-- SG90: power it from a separate regulated 5 V supply, not the board. Connect the supply's GND to the STM32 GND.
-- Don't connect the external +5 V to the STM32's 5 V or 3.3 V rails.
+The HC-SR04 runs on 5 V, with its GND connected to the STM32 GND. Power the SG90 from a separate regulated 5 V supply instead of the board, because the servo can draw more current than the board can safely provide. Connect the external supply's ground to the STM32 ground so all the signals share the same reference. Don't connect the external +5 V to the STM32's 5 V or 3.3 V rails.
 
 ## How it works
 
-1. **Sweep:** The main loop moves the servo 1° at a time. Each step sets the TIM2 compare value to a pulse between 1000 µs (0°) and 2000 µs (180°).
-2. **Measure:** At most once every 60 ms, the STM32 sends a 10 µs pulse on TRIG. The HC-SR04 sends out a 40 kHz burst and holds ECHO high until the echo returns. TIM5 counts in microseconds to time the ECHO pulse.
-3. **Convert:** Distance (cm) = echo time (µs) × 17 / 1000. Sound travels about 0.034 cm/µs, divided by 2 for the round trip. If no echo arrives within 20 ms, the reading counts as "no object."
-4. **React:** If the distance is between 1 and 29 cm, the buzzer turns on (50% duty cycle on TIM3) and the LCD shows the distance. Otherwise the buzzer turns off and the LCD shows "Radar Clear."
+The main loop moves the servo 1° at a time, sweeping from 0° to 180° and back. Each step sets the TIM2 compare value to a pulse between 1000 µs (0°) and 2000 µs (180°). TIM2 repeats that pulse every 20 ms with no extra work from the CPU.
+
+The system takes a distance reading during the sweep, at most once every 60 ms. The STM32 sends a 10 µs pulse on TRIG, and the HC-SR04 answers by sending out a 40 kHz burst of ultrasound. The sensor holds ECHO high until the sound bounces back. TIM5 counts in microseconds, so the program times exactly how long ECHO stays high.
+
+To get the distance, the program multiplies the echo time in microseconds by 17 and divides by 1000. Sound travels about 0.034 cm per microsecond, and dividing by 2 accounts for the trip out and back. Using whole numbers keeps the math fast and avoids floating point. If no echo arrives within 20 ms, the reading counts as "no object."
+
+If the distance is between 1 and 29 cm, TIM3 turns the buzzer on at a 50% duty cycle, and the LCD shows "Object Detected" with the distance. Otherwise the buzzer turns off and the LCD shows "Radar Clear."
 
 ## Timer setup
 
-All timers run from the 4 MHz MSI clock, with a prescaler of 3 to get 1 MHz ticks.
+All timers run from the 4 MHz MSI clock. A prescaler of 3 divides it down to 1 MHz, so each timer tick is 1 µs.
 
-| Timer | Use | Settings |
-|---|---|---|
-| TIM2 | Servo PWM | ARR = 19999 → 20 ms period |
-| TIM3 | Buzzer PWM | ARR = 285 → ~3.5 kHz |
-| TIM5 | Microsecond counter | 32-bit, free-running |
-| SysTick | `HAL_Delay()` | 1 ms ticks |
+- **TIM2 (servo PWM):** ARR = 19999, for a 20 ms period
+- **TIM3 (buzzer PWM):** ARR = 285, for about 3.5 kHz
+- **TIM5 (microsecond counter):** 32-bit, free-running
+- **SysTick:** 1 ms ticks for `HAL_Delay()`
 
 ## Building
 
-1. Create an STM32CubeIDE project for the STM32L476 (for example, a NUCLEO-L476RG).
-2. Replace the generated `main.c` with the one from this repository.
-3. Build and flash to the board.
-
-## Files
-
-- `main.c` – All of the program code: LCD driver, servo, sensor, buzzer and the main loop
-- `radar_block_diagram.png` – System block diagram
+Create an STM32CubeIDE project for the STM32L476 (for example, a NUCLEO-L476RG). Replace the generated `main.c` with the one from this repository, then build and flash it to the board.
